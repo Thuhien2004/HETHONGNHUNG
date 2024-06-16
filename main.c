@@ -1,0 +1,393 @@
+//LCD module connections
+#define LCD_RS_PIN PIN_D0
+#define LCD_RW_PIN PIN_D1
+#define LCD_ENABLE_PIN PIN_D2
+#define LCD_DATA4 PIN_D3
+#define LCD_DATA5 PIN_D4
+#define LCD_DATA6 PIN_D5
+#define LCD_DATA7 PIN_D6
+//End LCD module connections
+#include <16F877A.h>
+
+#fuses HS,NOWDT,NOPROTECT,NOLVP                       
+#use delay(clock = 8000000)
+#use rs232(baud=9600, xmit=PIN_C6, rcv=PIN_C7, stream=UART)
+#include <lcd.c>
+#use fast_io(B)
+#use I2C(master, I2C1, FAST = 100000)
+#use pwm (PWM1, FREQUENCY = 2400Hz, DUTY = 50, PWM_OFF)
+short alarm1_status, alarm2_status;
+char time[] = "TIME:      :  :  ";
+char calendar[] = "  /  /20  ";
+char alarm1[] = "SET1:    :  :00  ";
+char alarm2[] = "SET2:    :  :00  ";
+unsigned int8 second, second10, minute, minute10,
+               hour, hour10, date, date10, month, month10,
+               year, year10, day, alarm1_minute, alarm1_hour,
+               alarm2_minute, alarm2_hour;
+void ds1307_display(){
+  second10  =  (second & 0x70) >> 4;
+  second = second & 0x0F;
+  minute10  =  (minute & 0x70) >> 4;
+  minute = minute & 0x0F;
+  hour10  =  (hour & 0x30) >> 4;
+  hour = hour & 0x0F;
+  date10  =  (date & 0x30) >> 4;
+  date = date & 0x0F;
+  month10  =  (month & 0x10) >> 4;
+  month = month & 0x0F;
+  year10  =  (year & 0xF0) >> 4;
+  year = year & 0x0F;
+  time[16]  = second  + 48;
+  time[15]  = second10  + 48;
+  time[13]  = minute  + 48;
+  time[12]  = minute10  + 48;
+  time[10]  = hour  + 48;
+  time[9]  = hour10  + 48;
+  calendar[9]  = year  + 48;
+  calendar[8]  = year10  + 48;
+  calendar[4]  = month + 48;
+  calendar[3]  = month10 + 48;
+  calendar[1]  = date + 48;
+  calendar[0]  = date10 + 48;
+  lcd_gotoxy(1, 1);                              // Go to column 1 row 1
+  printf(lcd_putc, time);                        // Display time
+  lcd_gotoxy(1, 2);                              // Go to column 1 row 2
+  switch(day){
+    case 1: lcd_putc("THU:CHUNHAT "); break;
+    case 2: lcd_putc("THU:THU2 "); break;
+    case 3: lcd_putc("THU:THU3 "); break;
+    case 4: lcd_putc("THU:THU4 "); break;
+    case 5: lcd_putc("THU:THU5 "); break;
+    case 6: lcd_putc("THU:THU6 "); break;
+    case 7: lcd_putc("THU:THU7 "); break;}
+  lcd_gotoxy(10, 2);                             // Go to column 10 row 2
+  printf(lcd_putc, calendar);                    // Display calendar
+}
+
+void alarm_display(){                            // Display alarms info
+  lcd_gotoxy(21, 1);                             // Go to column 1 row 3
+  if(alarm1_status){
+  alarm1[13]  = alarm1_minute % 10  + 48;
+  alarm1[12]  = alarm1_minute/10 + 48;
+  alarm1[10]  = alarm1_hour%10  + 48;
+  alarm1[9]  = alarm1_hour/10  + 48;
+  printf(lcd_putc, alarm1);}
+  else lcd_putc("SET1:    TAT   ");
+  lcd_gotoxy(21, 2);
+  if(alarm2_status){
+  alarm2[13]  = alarm2_minute % 10  + 48;
+  alarm2[12]  = alarm2_minute/10 + 48;
+  alarm2[10]  = alarm2_hour%10  + 48;
+  alarm2[9]  = alarm2_hour/10  + 48;
+  lcd_gotoxy(21, 2);                             // Go to column 1 row 4
+  printf(lcd_putc, alarm2);}
+  else lcd_putc("SET2:    TAT   ");
+}
+void ds1307_write(unsigned int8 address, data_){
+  i2c_start();                          // Start I2C
+  i2c_write(0xD0);                      // DS1307 address
+  i2c_write(address);                   // Send register address
+  i2c_write(data_);                     // Write data to the selected register
+  i2c_stop();  
+ fprintf(UART, "Write DS1307: Address: %02X Data: %02X\n", address, data_);
+}
+void ds1307_read(){
+   i2c_start();                         // Start I2C
+   i2c_write(0xD0);                     // DS1307 address
+   i2c_write(0);                        // Send register address
+   i2c_start();                         // Restart I2C
+   i2c_write(0xD1);                     // Initialize data read
+   second =i2c_read(1);                 // Read seconds from register 0
+   minute =i2c_read(1);                 // Read minuts from register 1
+   hour = i2c_read(1);                  // Read hour from register 2
+   day = i2c_read(1);                   // Read day from register 3
+   date = i2c_read(1);                  // Read date from register 4
+   month = i2c_read(1);                 // Read month from register 5
+   year = i2c_read(0);                  // Read year from register 6
+   i2c_stop();         
+ fprintf(UART, "Read DS1307: %02X:%02X:%02X %02X/%02X/20%02X Day: %02X\n", hour, minute, second, date, month, year, day);
+}
+void alarm_check(){
+ if((alarm1_minute == ((minute & 0x0F) + (minute >> 4) * 10)) &&
+ (alarm1_hour == ((hour & 0x0F) + (hour >> 4) * 10)) && (second == 0) && alarm1_status)
+    output_high(PIN_B3);
+ if((alarm2_minute == ((minute & 0x0F) + (minute >> 4) * 10)) &&
+ (alarm2_hour == ((hour & 0x0F) + (hour >> 4) * 10)) && (second == 0) && alarm2_status)
+    pwm_on();
+}
+
+void ds1307_init(){
+  ds1307_write(0x00, 0x00); // B?t giây và kh?i d?ng DS1307
+  ds1307_write(0x02, 0x00); // Ð?t gi? ch? d? 24 gi?
+  fprintf(UART, "DS1307 Initialized\n");
+}
+
+
+
+void main(){
+   port_b_pullups(TRUE);                  // Enable PORTB pull-ups
+  output_b(0);
+  set_tris_b(7);                        // Configure RB0 & RB1 as inputs
+  lcd_init();                           // Initialize LCD module
+  lcd_putc('\f');                       // LCD clear
+
+  ds1307_init();  
+ 
+  
+  // LCD clear
+  while(TRUE){
+   if(input(PIN_B0) == 0){
+    // Convert BCD to decimal
+    minute = minute + minute10 * 10;
+    hour = hour + hour10 * 10;
+    date = date + date10 * 10;
+    month = month + month10 * 10;
+    year = year + year10 * 10;
+    // End conversion
+    lcd_gotoxy(1, 1);                   // Go to column 1 row 1
+    lcd_putc("      PHUT:   ");
+    lcd_gotoxy(1, 2);
+    lcd_putc("                   ");
+    delay_ms(200);
+    while(TRUE){
+     if(input(PIN_B1) == 0)
+      minute++;
+     if(minute > 59)
+      minute = 0;
+     lcd_gotoxy(10, 2);                  // Go to column 10 row 2
+     printf(lcd_putc,"%02u", minute);
+     if(input(PIN_B0) == 0)
+      break;
+     delay_ms(200);
+    }
+    lcd_gotoxy(7, 1);                    // Go to column 7 row 1
+    lcd_putc("  GIO: ");
+    lcd_gotoxy(10, 2);                   // Go to column 10 row 2
+    lcd_putc("  ");
+    delay_ms(200);
+    while(TRUE){
+     if(input(PIN_B1) == 0)
+      hour++;
+     if(hour > 23)
+      hour = 0;
+     lcd_gotoxy(10, 2);                  // Go to column 10 row 2
+     printf(lcd_putc,"%02u", hour);
+     if(input(PIN_B0) == 0)
+      break;
+     delay_ms(200);
+    }
+    lcd_gotoxy(9, 1);                   // Go to column 9 row 1
+    lcd_putc("SET_LICH: ");
+    lcd_gotoxy(10, 2);                  // Go to column 10 row 2
+    lcd_putc("  ");
+    delay_ms(200);
+    while(TRUE){
+     if(input(PIN_B1) == 0)
+      day++;
+     if(day > 7)
+      day = 1;
+     lcd_gotoxy(6, 2);                  // Go to column 6 row 2
+     switch(day){
+       case 1: lcd_putc("  CHUNHAT "); break;
+       case 2: lcd_putc("  THU2 "); break;
+       case 3: lcd_putc(" THU3 "); break;
+       case 4: lcd_putc(" THU4 "); break;
+       case 5: lcd_putc(" THU5 "); break;
+       case 6: lcd_putc("  THU6 "); break;
+       case 7: lcd_putc(" THU7 "); break;}
+     if(input(PIN_B0) == 0)
+      break;
+     delay_ms(200);
+    }
+    lcd_gotoxy(9, 1);                   // Go to column 9 row 1
+    lcd_putc("NGAY:");
+    lcd_gotoxy(6, 2);                   // Go to column 6 row 2
+    lcd_putc("         ");
+    delay_ms(200);
+    while(TRUE){
+     if(input(PIN_B1) == 0)
+      date++;
+     if(date > 31)
+      date = 1;
+     lcd_gotoxy(10, 2);                  // Go to column 10 row 2
+     printf(lcd_putc,"%02u", date);
+     if(input(PIN_B0) == 0)
+      break;
+     delay_ms(200);
+    }
+    lcd_gotoxy(8, 1);                   // Go to column 8 row 1
+    lcd_putc("THANG");
+    lcd_gotoxy(10, 2);                  // Go to column 10 row 2
+    lcd_putc("  ");
+    delay_ms(200);
+    while(TRUE){
+     if(input(PIN_B1) == 0)
+      month++;
+     if(month > 12)
+      month = 1;
+     lcd_gotoxy(10, 2);                  // Go to column 10 row 2
+     printf(lcd_putc,"%02u", month);
+     if(input(PIN_B0) == 0)
+      break;
+     delay_ms(200);
+    }
+    lcd_gotoxy(8, 1);
+    lcd_putc(" NAM ");
+    lcd_gotoxy(9, 2);
+    lcd_putc("20 ");
+    delay_ms(200);
+    while(TRUE){
+     if(input(PIN_B1) == 0)
+      year++;
+     if(year > 99)
+      year = 0;
+     lcd_gotoxy(11, 2);
+     printf(lcd_putc,"%02u", year);
+     if(input(PIN_B0) == 0){
+      // Convert decimal to BCD
+      minute = ((minute/10) << 4) + (minute % 10);
+      hour = ((hour/10) << 4) + (hour % 10);
+      date = ((date/10) << 4) + (date % 10);
+      month = ((month/10) << 4) + (month % 10);
+      year = ((year/10) << 4) + (year % 10);
+      // End conversion
+      ds1307_write(1, minute);
+      ds1307_write(2, hour);
+      ds1307_write(3, day);
+      ds1307_write(4, date);
+      ds1307_write(5, month);
+      ds1307_write(6, year);
+      ds1307_write(0, 0);
+      delay_ms(200);
+      break;
+     }
+     delay_ms(200);
+    }
+   }
+   if(input(PIN_B2) == 0){
+     lcd_gotoxy(21, 1);
+     lcd_putc("       SET1:   ");
+     lcd_gotoxy(21, 2);
+     lcd_putc("                    ");
+     delay_ms(200);
+     while(TRUE){
+       ds1307_read();
+       ds1307_display();
+       if(input(PIN_B1) == 0)
+         alarm1_status++;
+       if(alarm1_status){
+         lcd_gotoxy(30, 2);
+         lcd_putc(" BAT ");}
+       else{
+         lcd_gotoxy(30, 2);
+         lcd_putc(" TAT ");}
+       if(input(PIN_B2) == 0)
+      break;
+       delay_ms(200);} 
+     if(alarm1_status){
+     lcd_gotoxy(21, 1);
+     lcd_putc("    SET1 PHUT:");
+     lcd_gotoxy(21, 2);
+     lcd_putc("                    ");
+     delay_ms(200);
+     while(TRUE){
+       ds1307_read();
+       ds1307_display();
+       if(input(PIN_B1) == 0)
+         alarm1_minute++;
+       if(alarm1_minute > 59)
+         alarm1_minute = 0;
+     lcd_gotoxy(30, 2);
+     printf(lcd_putc,"%02u", alarm1_minute);
+     if(input(PIN_B2) == 0)
+      break;
+     delay_ms(200);
+     }
+     lcd_gotoxy(21, 1);
+     lcd_putc("     SET1 GIO:  ");
+     lcd_gotoxy(21, 2);
+     lcd_putc("                    ");
+     delay_ms(200);
+     while(TRUE){
+       ds1307_read();
+       ds1307_display();
+       if(input(PIN_B1) == 0)
+         alarm1_hour++;
+       if(alarm1_hour > 23)
+         alarm1_hour = 0;
+     lcd_gotoxy(30, 2);
+     printf(lcd_putc,"%02u", alarm1_hour);
+     if(input(PIN_B2) == 0)
+      break;
+     delay_ms(200);
+     }}
+     lcd_gotoxy(21, 1);
+     lcd_putc("       SET2:   ");
+     lcd_gotoxy(21, 2);
+     lcd_putc("                    ");
+     delay_ms(200);
+     while(TRUE){
+       ds1307_read();
+       ds1307_display();
+       if(input(PIN_B1) == 0)
+         alarm2_status++;
+       if(alarm2_status){
+         lcd_gotoxy(30, 2);
+         lcd_putc(" BAT ");}
+       else{
+         lcd_gotoxy(30, 2);
+         lcd_putc(" TAT ");}
+       if(input(PIN_B2) == 0)
+      break;
+       delay_ms(200);} 
+     if(alarm2_status){
+     lcd_gotoxy(21, 1);
+     lcd_putc("    SET2 PHUT:");
+     lcd_gotoxy(21, 2);
+     lcd_putc("                    ");
+     delay_ms(200);
+     while(TRUE){
+       ds1307_read();
+       ds1307_display();
+       if(input(PIN_B1) == 0)
+         alarm2_minute++;
+       if(alarm2_minute > 59)
+         alarm2_minute = 0;
+     lcd_gotoxy(30, 2);
+     printf(lcd_putc,"%02u", alarm2_minute);
+     if(input(PIN_B2) == 0)
+      break;
+     delay_ms(200);
+     }
+     lcd_gotoxy(21, 1);
+     lcd_putc("     SET2 GIO:  ");
+     lcd_gotoxy(21, 2);
+     lcd_putc("                    ");
+     delay_ms(200);
+     while(TRUE){
+       ds1307_read();
+       ds1307_display();
+       if(input(PIN_B1) == 0)
+         alarm2_hour++;
+       if(alarm2_hour > 23)
+         alarm2_hour = 0;
+     lcd_gotoxy(30, 2);
+     printf(lcd_putc,"%02u", alarm2_hour);
+     if(input(PIN_B2) == 0)
+      break;
+     delay_ms(200);
+     }}
+     delay_ms(200); 
+   }
+   if(input(PIN_B1) == 0){
+     output_low(PIN_B3);
+     pwm_off();
+   }
+   ds1307_read();                       // Read data from DS1307 RTCC
+   alarm_check();                       // Check if there is an alarm
+   ds1307_display();                    // Diaplay time and calendar
+   alarm_display();                     // Display alarms
+   delay_ms(50);
+  }
+}
